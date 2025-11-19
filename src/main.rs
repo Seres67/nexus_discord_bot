@@ -36,6 +36,9 @@ impl EventHandler for Handler {
 
 #[tokio::main]
 async fn main() {
+    // This will load the environment variables located at `./.env`, relative to the CWD.
+    // See `./.env.example` for an example on how to structure this.
+    dotenv::dotenv().expect("Failed to load .env file");
     // Configure the client with your Discord bot token in the environment.
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
     // Set gateway intents, which decides what events the bot will be notified about
@@ -58,4 +61,3 @@ async fn main() {
         println!("Client error: {why:?}");
     }
 }
-
