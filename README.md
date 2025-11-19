@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Rust (https://rustup.rs/)
+- Rust (https://rustup.rs/), if building from source.
 
 ## How to run
 
