@@ -1,5 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env::{self};
+use std::fmt::Write;
 
 use serenity::async_trait;
 use serenity::model::channel::Message;
@@ -8,10 +9,7 @@ use serenity::prelude::*;
 
 async fn parse_logfile(ctx: &Context, msg: &Message) {
     let file = msg.attachments.get(0).unwrap();
-    if file.filename.ends_with(".jpg")
-        || file.filename.ends_with(".jpeg")
-        || file.filename.ends_with(".png")
-    {
+    if !file.filename.ends_with(".txt") && !file.filename.ends_with(".log") {
         return;
     }
     let file_content = match file.download().await {
@@ -33,40 +31,66 @@ async fn parse_logfile(ctx: &Context, msg: &Message) {
 
     let lines: Vec<&str> = file_string.lines().collect();
 
-    let mut msg_content = String::new();
-
     let mut stacktrace_pos = 0;
     let mut found_exception_line = false;
-    let mut skip_next = false;
-    for (i, line) in lines.iter().enumerate() {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
+    let mut game_exit = false;
+
+    let mut assertions: HashMap<String, u32> = HashMap::new();
+    let mut skipped: HashMap<String, u32> = HashMap::new();
+    let mut crash = String::new();
+
+    let mut iter = lines.iter().enumerate().peekable();
+    while let Some((i, line)) = iter.next() {
         if line.contains("intercepted unhandled hardware exception") {
             let pos = line.find("\"").unwrap();
             let (_, to_print) = line.split_at(pos);
-            msg_content.push_str("crash happened at: ");
-            msg_content.push_str(to_print);
-            msg_content.push('\n');
+            writeln!(crash, "crash happened at: {}", to_print).unwrap();
             found_exception_line = true;
-        }
-        if line.contains("skipped extension") {
+        } else if line.contains("intercepted gw2 assertion fail") {
             let pos = line.find("\"").unwrap();
             let (_, to_print) = line.split_at(pos);
-            msg_content.push_str("skipped extension: ");
-            msg_content.push_str(to_print);
-            msg_content.push('\n');
-        }
-        if line.contains("ignoring hardware exception") {
-            skip_next = true;
+            assertions
+                .entry(to_print.to_owned())
+                .and_modify(|c| *c += 1)
+                .or_insert(1);
+        } else if line.contains("skipped extension") {
+            let pos = line.find("\"").unwrap();
+            let (_, to_print) = line.split_at(pos);
+            skipped
+                .entry(to_print.to_owned())
+                .and_modify(|c| *c += 1)
+                .or_insert(1);
+        } else if line.contains("ignoring hardware exception") {
+            iter.next();
             continue;
-        }
-        if line.contains("RVA") && found_exception_line {
+        } else if line.contains("RVA") && found_exception_line {
             stacktrace_pos = i + 2;
             break;
+        } else if line.contains("info: game exit") {
+            game_exit = true;
         }
     }
+    let mut msg_content = String::new();
+    if !found_exception_line && game_exit {
+        writeln!(msg_content, "\nGame crashed on exit with an unknown cause.").unwrap();
+        if let Err(why) = msg.reply(&ctx.http, msg_content).await {
+            println!("Error sending message: {why:?}");
+        }
+        return;
+    }
+    if !skipped.is_empty() {
+        writeln!(msg_content, "Skipped extensions:").unwrap();
+        for (k, v) in skipped {
+            writeln!(msg_content, "- {}x {}", v, k).unwrap();
+        }
+    }
+    if !assertions.is_empty() {
+        writeln!(msg_content, "Intercepted GW2 assertion fails:").unwrap();
+        for (k, v) in assertions {
+            writeln!(msg_content, "- {}x {}", v, k).unwrap();
+        }
+    }
+    writeln!(msg_content, "\n{crash}").unwrap();
     let mut culprits: HashSet<String> = HashSet::new();
     for line in &lines[stacktrace_pos..] {
         let split = line.split_whitespace().collect::<Vec<&str>>();
@@ -88,19 +112,23 @@ async fn parse_logfile(ctx: &Context, msg: &Message) {
             culprits.insert(culprit_lowercase);
         }
     }
-    msg_content.push_str("\nLikely culprits:\n");
+    writeln!(msg_content, "Likely culprits:").unwrap();
     for culprit in &culprits {
-        msg_content.push_str(culprit);
-        msg_content.push('\n');
+        writeln!(msg_content, "{culprit}").unwrap();
     }
     if culprits.len() == 1 && culprits.contains("gw2-64") {
-        msg_content.push_str(
-            "\nThis is most likely a game crash, and there is nothing we can do about it.",
-        );
+        writeln!(
+            msg_content,
+            "\nThis is most likely a game crash, and there is nothing we can do about it."
+        )
+        .unwrap();
     }
     if culprits.contains("nvpresent64") {
-        msg_content
-            .push_str("\nThis is most likely caused by NVIDIA Smooth Motion, try disabling it.");
+        writeln!(
+            msg_content,
+            "\nThis is most likely caused by NVIDIA Smooth Motion, try disabling it."
+        )
+        .unwrap();
     }
     if let Err(why) = msg.reply(&ctx.http, msg_content).await {
         println!("Error sending message: {why:?}");
