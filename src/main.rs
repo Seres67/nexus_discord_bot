@@ -37,35 +37,70 @@ async fn parse_logfile(ctx: &Context, msg: &Message) {
 
     let mut stacktrace_pos = 0;
     let mut found_exception_line = false;
+    let mut skip_next = false;
     for (i, line) in lines.iter().enumerate() {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
         if line.contains("intercepted unhandled hardware exception") {
             let pos = line.find("\"").unwrap();
             let (_, to_print) = line.split_at(pos);
+            msg_content.push_str("crash happened at: ");
             msg_content.push_str(to_print);
             msg_content.push('\n');
             found_exception_line = true;
+        }
+        if line.contains("skipped extension") {
+            let pos = line.find("\"").unwrap();
+            let (_, to_print) = line.split_at(pos);
+            msg_content.push_str("skipped extension: ");
+            msg_content.push_str(to_print);
+            msg_content.push('\n');
+        }
+        if line.contains("ignoring hardware exception") {
+            skip_next = true;
+            continue;
         }
         if line.contains("RVA") && found_exception_line {
             stacktrace_pos = i + 2;
             break;
         }
     }
-    let mut culprits: HashSet<&str> = HashSet::new();
+    let mut culprits: HashSet<String> = HashSet::new();
     for line in &lines[stacktrace_pos..] {
         let split = line.split_whitespace().collect::<Vec<&str>>();
-        if split.len() == 4 {
-            let culprit = split.get(3).unwrap();
+        if split.len() >= 4 {
+            let culprit_str = split.get(3).unwrap();
+            let culprit = if culprit_str.contains("@") {
+                let split_culprit_str: Vec<&str> = culprit_str.split("@").collect();
+                split_culprit_str.get(0).unwrap().to_owned()
+            } else {
+                culprit_str
+            };
             let culprit_lowercase = culprit.to_lowercase();
-            if culprit_lowercase == "ntdll" || culprit_lowercase == "kernel32" {
+            if culprit_lowercase.contains("ntdll")
+                || culprit_lowercase.contains("kernel32")
+                || culprit_lowercase.contains("kernelbase")
+            {
                 continue;
             }
-            culprits.insert(culprit);
+            culprits.insert(culprit_lowercase);
         }
     }
     msg_content.push_str("\nLikely culprits:\n");
-    for culprit in culprits {
+    for culprit in &culprits {
         msg_content.push_str(culprit);
         msg_content.push('\n');
+    }
+    if culprits.len() == 1 && culprits.contains("gw2-64") {
+        msg_content.push_str(
+            "\nThis is most likely a game crash, and there is nothing we can do about it.",
+        );
+    }
+    if culprits.contains("nvpresent64") {
+        msg_content
+            .push_str("\nThis is most likely caused by NVIDIA Smooth Motion, try disabling it.");
     }
     if let Err(why) = msg.reply(&ctx.http, msg_content).await {
         println!("Error sending message: {why:?}");
