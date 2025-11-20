@@ -1,14 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::env::{self};
-use std::fmt::Write;
+use std::fmt::{Write, write};
 
+use serenity::all::Attachment;
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
 use serenity::prelude::*;
 
-async fn parse_logfile(ctx: &Context, msg: &Message) {
-    let file = msg.attachments.get(0).unwrap();
+async fn parse_logfile(ctx: &Context, msg: &Message, attachment: &Attachment) {
+    let file = attachment;
     if !file.filename.ends_with(".txt") && !file.filename.ends_with(".log") {
         return;
     }
@@ -16,7 +17,7 @@ async fn parse_logfile(ctx: &Context, msg: &Message) {
         Ok(c) => c,
         Err(e) => {
             println!("{e}");
-            let _ = msg.reply(&ctx.http, "Failed to download file.");
+            let _ = msg.reply(&ctx.http, "Failed to download file.").await;
             return;
         }
     };
@@ -24,7 +25,7 @@ async fn parse_logfile(ctx: &Context, msg: &Message) {
         Ok(v) => v,
         Err(e) => {
             println!("{e}");
-            let _ = msg.reply(&ctx.http, "Failed to read file.");
+            let _ = msg.reply(&ctx.http, "Failed to read file.").await;
             return;
         }
     };
@@ -53,6 +54,7 @@ async fn parse_logfile(ctx: &Context, msg: &Message) {
                 .entry(to_print.to_owned())
                 .and_modify(|c| *c += 1)
                 .or_insert(1);
+            found_exception_line = true;
         } else if line.contains("skipped extension") {
             let pos = line.find("\"").unwrap();
             let (_, to_print) = line.split_at(pos);
@@ -71,6 +73,7 @@ async fn parse_logfile(ctx: &Context, msg: &Message) {
         }
     }
     let mut msg_content = String::new();
+    // writeln!(msg_content, "{}:", file.filename).unwrap();
     if !found_exception_line && game_exit {
         writeln!(msg_content, "\nGame crashed on exit with an unknown cause.").unwrap();
         if let Err(why) = msg.reply(&ctx.http, msg_content).await {
@@ -98,7 +101,7 @@ async fn parse_logfile(ctx: &Context, msg: &Message) {
             let culprit_str = split.get(3).unwrap();
             let culprit = if culprit_str.contains("@") {
                 let split_culprit_str: Vec<&str> = culprit_str.split("@").collect();
-                split_culprit_str.get(0).unwrap().to_owned()
+                split_culprit_str.first().unwrap().to_owned()
             } else {
                 culprit_str
             };
@@ -146,22 +149,29 @@ impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         if msg.content == "!analyze" {
             if msg.attachments.len() == 1 {
-                parse_logfile(&ctx, &msg).await;
+                parse_logfile(&ctx, &msg, msg.attachments.first().unwrap()).await;
             } else if msg.referenced_message.is_some() {
                 let referenced_msg = msg.referenced_message.unwrap();
                 if referenced_msg.attachments.len() == 1 {
-                    parse_logfile(&ctx, &referenced_msg).await;
-                }
-            } else {
-                if let Err(why) = msg
-                    .reply_ping(
-                        &ctx.http,
-                        "Please send an arcdps crashlog with your command.",
+                    parse_logfile(
+                        &ctx,
+                        &referenced_msg,
+                        referenced_msg.attachments.first().unwrap(),
                     )
-                    .await
-                {
-                    println!("Error sending message: {why:?}");
-                };
+                    .await;
+                }
+            } else if let Err(why) = msg
+                .reply_ping(
+                    &ctx.http,
+                    "Please send an arcdps crashlog with your command.",
+                )
+                .await
+            {
+                println!("Error sending message: {why:?}");
+            };
+        } else if msg.content == "!bulk" {
+            for attachment in &msg.attachments {
+                parse_logfile(&ctx, &msg, &attachment).await;
             }
         }
     }
