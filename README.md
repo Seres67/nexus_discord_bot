@@ -1,4 +1,4 @@
-# Nexus Discord Bot
+# Arcdps Crashlogs Bot
 
 ## Prerequisites
 
@@ -10,7 +10,7 @@ Create a file named `.env` at the root of this project with this content:
 ```
 DISCORD_TOKEN=put your token here
 ```
-then either run `cargo run --release` to build and run the bot from source or, download the [latest release](https://github.com/Seres67/nexus_discord_bot/releases).
+then either run `cargo run --release` to build and run the bot from source or, download the [latest release](https://github.com/Seres67/arcdps_logs_bot/releases).
 
 ## Example output
 ```
