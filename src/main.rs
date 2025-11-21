@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::env::{self};
-use std::fmt::{Write, write};
+use std::fmt::Write;
 
 use serenity::all::Attachment;
 use serenity::async_trait;
@@ -41,6 +41,18 @@ async fn parse_logfile(ctx: &Context, msg: &Message, attachment: &Attachment) {
     let mut crash = String::new();
 
     let mut iter = lines.iter().enumerate().peekable();
+
+    let mut datetime: String = iter
+        .clone()
+        .take(1)
+        .map(|(_, line)| line.to_owned())
+        .collect::<String>()
+        .split(" ")
+        .take(2)
+        .collect::<Vec<&str>>()
+        .join(" ");
+    datetime.pop(); //NOTE: remove `:`
+    iter.next();
     while let Some((i, line)) = iter.next() {
         if line.contains("intercepted unhandled hardware exception") {
             let pos = line.find("\"").unwrap();
@@ -73,7 +85,7 @@ async fn parse_logfile(ctx: &Context, msg: &Message, attachment: &Attachment) {
         }
     }
     let mut msg_content = String::new();
-    // writeln!(msg_content, "{}:", file.filename).unwrap();
+    writeln!(msg_content, "Log start: {}", datetime).unwrap();
     if !found_exception_line && game_exit {
         writeln!(msg_content, "\nGame crashed on exit with an unknown cause.").unwrap();
         if let Err(why) = msg.reply(&ctx.http, msg_content).await {
